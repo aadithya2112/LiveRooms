@@ -38,7 +38,6 @@ jobs:
                  alias docker-compose='docker compose'
             fi
 
-
             # Navigate to app directory, create if it doesn't exist
             mkdir -p $APP_DIR
             cd $APP_DIR
