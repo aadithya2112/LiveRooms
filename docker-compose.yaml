@@ -1,0 +1,18 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.server
+    ports:
+      - "3000:3000"
+    container_name: "live-rooms-server"
+  
+  web:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.web
+    ports:
+      - "5173:4173"
+    container_name: "live-rooms-web"
+    depends_on:
+      - server
