@@ -2,11 +2,17 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
 
+// --- Shadcn UI Imports ---
+// Adjust the import path based on your project structure
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+// --- End Shadcn UI Imports ---
+
 // Define types for socket events
 interface ServerToClientEvents {
-  // ready: () => void; // REMOVED
-  initiate_offer: () => void; // ADDED
-  peer_ready: () => void; // ADDED
+  initiate_offer: () => void;
+  peer_ready: () => void;
   offer: (offer: RTCSessionDescriptionInit) => void;
   answer: (answer: RTCSessionDescriptionInit) => void;
   "ice-candidate": (candidate: RTCIceCandidateInit) => void;
@@ -33,7 +39,7 @@ const servers: RTCConfiguration = {
       urls: ["stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"],
     },
   ],
-  iceCandidatePoolSize: 10, // Optional: Gather some ICE candidates proactively
+  iceCandidatePoolSize: 10,
 };
 
 // --- The Room Component ---
@@ -48,28 +54,26 @@ export default function Room() {
   const [isPeerConnected, setIsPeerConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<string>(
     "Waiting for peer..."
-  ); // More detailed status
+  );
 
   const videoElement1 = useRef<HTMLVideoElement>(null);
   const videoElement2 = useRef<HTMLVideoElement>(null);
   const peerConnection = useRef<RTCPeerConnection | null>(null);
   const queuedIceCandidates = useRef<RTCIceCandidateInit[]>([]);
-  const isSignalingSetup = useRef(false); // Prevent duplicate listener setup
+  const isSignalingSetup = useRef(false);
 
   // --- Helper Function to Process Queued ICE Candidates ---
   const processQueuedCandidates = useCallback(async () => {
+    // ... (keep existing logic)
     if (!peerConnection.current || !peerConnection.current.remoteDescription) {
-      // console.warn(`[${roomId}] Attempted to process queue but remote description still null or PC closed.`);
       return;
     }
-
     if (queuedIceCandidates.current.length > 0) {
       console.log(
         `[${roomId}] Processing ${queuedIceCandidates.current.length} queued ICE candidates...`
       );
       const candidatesToProcess = [...queuedIceCandidates.current];
       queuedIceCandidates.current = [];
-
       for (const queuedCandidate of candidatesToProcess) {
         if (
           peerConnection.current?.remoteDescription &&
@@ -108,6 +112,7 @@ export default function Room() {
 
   // --- WebRTC Callbacks (Offer/Answer) ---
   const createOffer = useCallback(async () => {
+    // ... (keep existing logic)
     if (
       !peerConnection.current ||
       !roomId ||
@@ -141,11 +146,10 @@ export default function Room() {
 
   const createAnswer = useCallback(
     async (offer: RTCSessionDescriptionInit) => {
+      // ... (keep existing logic)
       if (!peerConnection.current || !roomId) return;
 
       const currentState = peerConnection.current.signalingState;
-      // Should be 'stable' or 'have-remote-offer' (if offer arrived before PC setup finished)
-      // Or potentially 'have-local-offer' if perfect glare happened despite server logic (unlikely but possible)
       if (
         currentState !== "stable" &&
         currentState !== "have-remote-offer" &&
@@ -162,25 +166,21 @@ export default function Room() {
       );
       setConnectionStatus("Received offer, creating answer...");
       try {
-        // Set Remote Description (Offer)
-        // This handles glare implicitly if state was 'have-local-offer'
         await peerConnection.current.setRemoteDescription(
           new RTCSessionDescription(offer)
         );
         console.log(
           `[${roomId}] Remote description (offer) set. New state: ${peerConnection.current.signalingState}`
-        ); // Should be have-remote-offer
+        );
 
-        // Process any queued candidates NOW
         await processQueuedCandidates();
 
-        // Only create the answer if the state correctly transitioned to have-remote-offer
         if (peerConnection.current.signalingState === "have-remote-offer") {
           const answer = await peerConnection.current.createAnswer();
           await peerConnection.current.setLocalDescription(answer);
           console.log(
             `[${roomId}] Answer created and set locally. New state: ${peerConnection.current.signalingState}. Sending...`
-          ); // Should be stable (or closing)
+          );
           socket.emit("answer", answer);
         } else {
           console.warn(
@@ -197,6 +197,7 @@ export default function Room() {
 
   // --- Effect 1: Get User Media & Join Room ---
   useEffect(() => {
+    // ... (keep existing logic, only UI related cleanup is adjusted below)
     if (!roomId) {
       console.error("No Room ID provided!");
       navigate("/");
@@ -210,7 +211,7 @@ export default function Room() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
           video: true,
-          audio: true, // Enable audio
+          audio: true,
         });
         if (didCancel) {
           stream.getTracks().forEach((track) => track.stop());
@@ -223,7 +224,6 @@ export default function Room() {
         }
 
         console.log(`[${roomId}] Connecting signaling server...`);
-        // Explicitly connect the socket
         socket.connect();
 
         socket.on("connect", () => {
@@ -238,46 +238,40 @@ export default function Room() {
         socket.on("disconnect", (reason) => {
           console.warn(`[${roomId}] Socket disconnected: ${reason}`);
           setConnectionStatus("Signaling server disconnected");
-          // Handle potential need to reconnect or clean up state
         });
 
         socket.on("connect_error", (error) => {
           console.error(`[${roomId}] Socket connection error:`, error);
           setConnectionStatus("Signaling connection error");
-          navigate("/"); // Navigate away on connection error
+          navigate("/");
         });
       } catch (error) {
         console.error(`[${roomId}] Error accessing webcam/microphone:`, error);
         setConnectionStatus("Media access denied");
-        navigate("/"); // Navigate away if media access fails
+        navigate("/");
       }
     };
 
     startVideo();
 
-    // --- Cleanup Function ---
     return () => {
       didCancel = true;
       console.log(`[${roomId}] Cleaning up Room component.`);
 
-      // Close PeerConnection first
       if (peerConnection.current) {
         console.log(`[${roomId}] Closing PeerConnection.`);
         peerConnection.current.close();
         peerConnection.current = null;
       }
 
-      // Stop media tracks
       localStream?.getTracks().forEach((track) => track.stop());
       setLocalStream(null);
       console.log(`[${roomId}] Local stream stopped.`);
 
-      // Disconnect socket
       if (socket.connected) {
         console.log(`[${roomId}] Disconnecting socket.`);
         socket.disconnect();
       }
-      // Remove listeners added in this effect
       socket.off("connect");
       socket.off("disconnect");
       socket.off("connect_error");
@@ -285,19 +279,18 @@ export default function Room() {
       setRemoteStream(null);
       setIsPeerConnected(false);
       queuedIceCandidates.current = [];
-      isSignalingSetup.current = false; // Reset flag
+      isSignalingSetup.current = false;
       console.log(`[${roomId}] Room cleanup finished.`);
     };
-  }, [roomId, navigate]); // Keep dependencies minimal
+  }, [roomId, navigate]);
 
   // --- Effect 2: Setup Peer Connection & Socket Listeners ---
   useEffect(() => {
-    // Only setup PC if we have a local stream, a room ID, and haven't set up listeners yet
+    // ... (keep existing logic, only UI related cleanup/listeners are adjusted below)
     if (!localStream || !roomId || isSignalingSetup.current) {
       return;
     }
 
-    // Avoid re-creating PC if one exists and isn't closed
     if (
       peerConnection.current &&
       peerConnection.current.connectionState !== "closed"
@@ -313,7 +306,7 @@ export default function Room() {
     );
     peerConnection.current = new RTCPeerConnection(servers);
     setIsPeerConnected(false);
-    queuedIceCandidates.current = []; // Ensure queue is clear
+    queuedIceCandidates.current = [];
 
     localStream.getTracks().forEach((track) => {
       try {
@@ -354,8 +347,6 @@ export default function Room() {
             console.error(
               `[${roomId}] Peer Connection Failed! Attempting ICE restart...`
             );
-            // Optional: Try restarting ICE
-            // peerConnection.current?.restartIce();
             setConnectionStatus("Connection failed");
           }
           if (newState === "disconnected") {
@@ -363,12 +354,10 @@ export default function Room() {
           }
           if (newState === "closed") {
             setConnectionStatus("Connection closed");
-            // Ensure remote video is cleared if not already
             if (videoElement2.current?.srcObject)
               videoElement2.current.srcObject = null;
-            setRemoteStream(null); // Clear the stream state
+            setRemoteStream(null);
           }
-          // Don't close PC here, let peer_disconnected signal or unmount handle it
           setIsPeerConnected(false);
         } else if (newState === "connecting") {
           setConnectionStatus("Connecting...");
@@ -390,7 +379,6 @@ export default function Room() {
           );
         }
       });
-      // Re-assign in case the stream object reference itself changed? (Usually not needed)
       if (
         videoElement2.current &&
         videoElement2.current.srcObject !== newRemoteStream
@@ -412,7 +400,7 @@ export default function Room() {
     };
 
     peerConnection.current.onicecandidateerror = (event: Event) => {
-      const iceErrorEvent = event as RTCPeerConnectionIceErrorEvent; // Type assertion
+      const iceErrorEvent = event as RTCPeerConnectionIceErrorEvent;
       console.error(
         `[${roomId}] ICE Candidate Error: Code ${iceErrorEvent.errorCode} - ${iceErrorEvent.errorText}`
       );
@@ -422,11 +410,7 @@ export default function Room() {
       console.log(
         `[${roomId}] Signaling state changed to: ${peerConnection.current?.signalingState}`
       );
-      // Optional: Update detailed status based on signaling state
-      // setConnectionStatus(`Signaling: ${peerConnection.current?.signalingState}`);
     };
-
-    // --- Socket Event Listeners ---
 
     const handleIceCandidate = async (candidateInit: RTCIceCandidateInit) => {
       if (
@@ -485,7 +469,6 @@ export default function Room() {
         );
         return;
       }
-      // Check if we *already* have a remote description set (avoid processing duplicate offers)
       if (peerConnection.current.remoteDescription) {
         console.warn(
           `[${roomId}] Received offer but remote description already set. Ignoring potentially duplicate offer.`
@@ -517,9 +500,8 @@ export default function Room() {
         );
         console.log(
           `[${roomId}] Remote description (answer) set. New state: ${peerConnection.current.signalingState}`
-        ); // Should be stable
+        );
 
-        // Process any queued candidates NOW
         await processQueuedCandidates();
       } catch (error) {
         console.error(
@@ -530,7 +512,6 @@ export default function Room() {
       }
     };
 
-    // --- Handle initiate_offer ---
     const handleInitiateOffer = async () => {
       if (
         !peerConnection.current ||
@@ -548,7 +529,6 @@ export default function Room() {
       await createOffer();
     };
 
-    // --- Handle peer_ready ---
     const handlePeerReady = () => {
       console.log(`[${roomId}] Received 'peer_ready'. Waiting for offer.`);
       setConnectionStatus("Peer detected, waiting for offer...");
@@ -566,7 +546,6 @@ export default function Room() {
         return;
       }
 
-      // Close the connection gracefully if not already closed
       if (peerConnection.current.signalingState !== "closed") {
         console.log(
           `[${roomId}] Closing peer connection due to peer disconnect signal.`
@@ -577,22 +556,18 @@ export default function Room() {
           `[${roomId}] Peer connection already closed when peer disconnect signal received.`
         );
       }
-      // Setting peerConnection.current to null is handled by the main cleanup or state change handler
 
-      // Clear remote video display explicitly
       if (videoElement2.current) {
         videoElement2.current.srcObject = null;
       }
       setRemoteStream(null);
-      queuedIceCandidates.current = []; // Clear queue
+      queuedIceCandidates.current = [];
 
       console.warn(
         `[${roomId}] Peer connection handling finished for peer disconnect signal.`
       );
-      // Consider navigating away or showing a 'disconnected' message persistently
     };
 
-    // Attach listeners
     socket.on("ice-candidate", handleIceCandidate);
     socket.on("offer", handleOffer);
     socket.on("answer", handleAnswer);
@@ -600,14 +575,12 @@ export default function Room() {
     socket.on("peer_ready", handlePeerReady);
     socket.on("peer_disconnected", handlePeerDisconnected);
 
-    isSignalingSetup.current = true; // Mark listeners as attached
+    isSignalingSetup.current = true;
 
-    // Cleanup listeners on effect unmount or when dependencies change significantly
     return () => {
       console.log(
         `[${roomId}] Cleaning up PeerConnection setup effect listeners.`
       );
-      // Remove listeners specific to this effect
       socket.off("ice-candidate", handleIceCandidate);
       socket.off("offer", handleOffer);
       socket.off("answer", handleAnswer);
@@ -615,74 +588,89 @@ export default function Room() {
       socket.off("peer_ready", handlePeerReady);
       socket.off("peer_disconnected", handlePeerDisconnected);
 
-      isSignalingSetup.current = false; // Reset flag if effect re-runs
-
-      // Note: PeerConnection closing is primarily handled by the *first* useEffect's cleanup
-      // to ensure it happens on component unmount, regardless of dependency changes here.
+      isSignalingSetup.current = false;
     };
-  }, [localStream, roomId, createOffer, createAnswer, processQueuedCandidates]); // Dependencies
+  }, [localStream, roomId, createOffer, createAnswer, processQueuedCandidates]);
 
   // --- Render Logic ---
   return (
-    <div className="flex flex-col h-screen bg-gray-900 text-white">
-      <header className="p-4 bg-gray-800 text-center">
-        <h1 className="text-xl font-semibold">Room: {roomId}</h1>
+    <div className="flex flex-col h-screen bg-zinc-950 text-zinc-100">
+      {/* Header */}
+      <header className="p-4 bg-zinc-900 border-b border-zinc-700 text-center shadow-md">
+        <h1 className="text-xl font-semibold text-indigo-400">
+          Room: <span className="font-mono text-indigo-300">{roomId}</span>
+        </h1>
         <p
-          className={`text-sm ${
+          className={`text-sm mt-1 ${
             isPeerConnected ? "text-green-400" : "text-yellow-400"
           }`}
         >
-          Status: {connectionStatus}
+          {connectionStatus}
         </p>
       </header>
+
+      {/* Main Video Area */}
       <main className="flex-grow grid grid-cols-1 md:grid-cols-2 gap-4 p-4 overflow-hidden">
-        {/* Local Video */}
-        <div className="bg-black rounded-lg overflow-hidden relative aspect-video">
-          {" "}
-          {/* Added aspect-video */}
-          <video
-            ref={videoElement1}
-            className="w-full h-full object-cover"
-            autoPlay
-            playsInline
-            muted // Important for local video
-          />
-          <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 px-2 py-1 rounded text-xs">
-            Local
-          </div>
-        </div>
-        {/* Remote Video */}
-        <div className="bg-black rounded-lg overflow-hidden relative aspect-video">
-          {" "}
-          {/* Added aspect-video */}
-          <video
-            ref={videoElement2}
-            className="w-full h-full object-cover"
-            autoPlay
-            playsInline
-          />
-          <div className="absolute bottom-2 left-2 bg-black bg-opacity-50 px-2 py-1 rounded text-xs">
-            Remote
-          </div>
-          {/* Improved placeholder logic */}
-          {!isPeerConnected &&
-            (!remoteStream || remoteStream.getTracks().length === 0) && (
-              <div className="absolute inset-0 flex items-center justify-center text-gray-400">
-                {connectionStatus.startsWith("Waiting") ||
-                connectionStatus.startsWith("Signaling")
-                  ? "Waiting for peer..."
-                  : connectionStatus}
-              </div>
-            )}
-        </div>
+        {/* Local Video Card */}
+        <Card className="bg-zinc-900 border-zinc-800 overflow-hidden relative aspect-video shadow-lg">
+          <CardContent className="p-0 h-full w-full relative">
+            <video
+              ref={videoElement1}
+              className="w-full h-full object-cover"
+              autoPlay
+              playsInline
+              muted // Important for local video
+            />
+            <Badge
+              variant="secondary"
+              className="absolute bottom-2 left-2 bg-zinc-800 text-zinc-200 text-xs"
+            >
+              You
+            </Badge>
+          </CardContent>
+        </Card>
+
+        {/* Remote Video Card */}
+        <Card className="bg-zinc-900 border-zinc-800 overflow-hidden relative aspect-video shadow-lg">
+          <CardContent className="p-0 h-full w-full relative">
+            <video
+              ref={videoElement2}
+              className="w-full h-full object-cover"
+              autoPlay
+              playsInline
+            />
+            <Badge
+              variant="secondary"
+              className="absolute bottom-2 left-2 bg-zinc-800 text-zinc-200 text-xs"
+            >
+              Remote
+            </Badge>
+            {/* Placeholder */}
+            {!isPeerConnected &&
+              (!remoteStream || remoteStream.getTracks().length === 0) && (
+                <div className="absolute inset-0 flex items-center justify-center text-zinc-500 bg-zinc-900 bg-opacity-80">
+                  <p>
+                    {connectionStatus.startsWith("Waiting") ||
+                    connectionStatus.startsWith("Signaling")
+                      ? "Waiting for peer..."
+                      : connectionStatus}
+                  </p>
+                </div>
+              )}
+          </CardContent>
+        </Card>
       </main>
-      <footer className="p-2 bg-gray-800 text-center">
-        <button
-          onClick={() => navigate("/")} // Use navigate for consistency
-          className="bg-red-600 hover:bg-red-700 text-white font-bold py-1 px-3 rounded text-sm"
+
+      {/* Footer */}
+      <footer className="p-3 bg-zinc-900 border-t border-zinc-700 text-center shadow-md">
+        <Button
+          onClick={() => navigate("/")}
+          variant="destructive" // Use destructive variant for leaving/danger actions
+          size="sm"
+          className="bg-red-600 hover:bg-red-700 text-white font-bold"
         >
           Leave Room
-        </button>
+        </Button>
       </footer>
     </div>
   );
