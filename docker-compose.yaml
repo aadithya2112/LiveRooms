@@ -12,7 +12,7 @@ services:
       context: .
       dockerfile: ./docker/Dockerfile.web
     ports:
-      - "5173:4173"
+      - "5173:5173"
     container_name: "live-rooms-web"
     depends_on:
       - server
