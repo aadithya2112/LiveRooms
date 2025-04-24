@@ -2,6 +2,8 @@
 
 LiveRooms is a live video chat application using WebRTC, allowing users to create and join rooms for real-time communication. The project is built with React with typescript and Socket.io (nodejs) as the signaling server.
 
+Live Link: [LiveRooms](https://rooms.aadithya.tech/)
+
 ## Installation
 
 To get started with the LiveRooms project, follow these steps:
