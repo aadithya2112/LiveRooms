@@ -33,7 +33,7 @@ function HomePage() {
       <Card className="w-full max-w-md bg-zinc-900 border border-zinc-800 text-white shadow-xl rounded-2xl">
         <CardHeader className="text-center space-y-2">
           <CardTitle className="text-3xl font-semibold text-indigo-500">
-            🎥 WebRTC Video Call
+            🎥 LiveRooms
           </CardTitle>
           <CardDescription className="text-zinc-400">
             Join an existing room or create a new one to start calling.
