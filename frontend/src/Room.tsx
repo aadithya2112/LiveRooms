@@ -44,6 +44,7 @@ const servers: RTCConfiguration = {
 
 // --- The Room Component ---
 export default function Room() {
+  console.log("Server ", import.meta.env.VITE_SIGNALLING_SERVER_URL);
   // --- Hooks ---
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
