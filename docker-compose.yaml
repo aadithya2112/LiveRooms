@@ -16,3 +16,5 @@ services:
     container_name: "live-rooms-web"
     depends_on:
       - server
+    env_file:
+      - .env
