@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { io, Socket } from "socket.io-client";
+import { VITE_SIGNALLING_SERVER_URL } from "../config"; // Adjust the import based on your project structure
 
 // --- Shadcn UI Imports ---
 // Adjust the import path based on your project structure
@@ -28,7 +29,7 @@ interface ClientToServerEvents {
 
 // --- Socket Connection ---
 const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(
-  import.meta.env.VITE_SIGNALLING_SERVER_URL || "http://localhost:3000",
+  VITE_SIGNALLING_SERVER_URL || "http://localhost:3000",
   { autoConnect: false } // Start disconnected
 );
 
@@ -44,7 +45,7 @@ const servers: RTCConfiguration = {
 
 // --- The Room Component ---
 export default function Room() {
-  console.log("Server ", import.meta.env.VITE_SIGNALLING_SERVER_URL);
+  console.log("Server ", VITE_SIGNALLING_SERVER_URL);
   // --- Hooks ---
   const { roomId } = useParams<{ roomId: string }>();
   const navigate = useNavigate();
