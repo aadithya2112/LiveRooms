@@ -29,13 +29,13 @@ jobs:
                 exit 1
             fi
             if ! command -v docker-compose &> /dev/null; then
-                # Check for new 'docker compose' command
-                if ! docker compose version &> /dev/null; then
+                 # Check for new 'docker compose' command
+                 if ! docker compose version &> /dev/null; then
                     echo "Docker Compose (v1 or v2 plugin) could not be found, please install it on the VM."
                     exit 1
-                fi
-                # Alias docker-compose to docker compose if v1 is not found but v2 is
-                alias docker-compose='docker compose'
+                 fi
+                 # Alias docker-compose to docker compose if v1 is not found but v2 is
+                 alias docker-compose='docker compose'
             fi
 
             # Navigate to app directory, create if it doesn't exist
@@ -58,22 +58,11 @@ jobs:
             # Note: Using https assuming Cloudflare handles SSL termination
             echo "VITE_SIGNALLING_SERVER_URL=https://${{ secrets.DOMAIN_NAME }}" > .env
 
-            # Stop existing containers
-            echo "Stopping existing Docker containers..."
-            docker-compose -f docker-compose.yml down
-
             # Build and restart docker-compose services
             echo "Building Docker images..."
-            docker-compose -f docker-compose.yml build
+            docker-compose down
 
             echo "Starting Docker containers..."
-            docker-compose -f docker-compose.yml up -d
-
-            # Check running containers
-            echo "Checking running containers..."
-            docker ps
+            docker-compose up -d --build
 
             echo "Deployment successful!"
-                env:
-                  SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }} # VM Private SSH Key
-                  DOMAIN_NAME: ${{ secrets.DOMAIN_NAME }} # Domain name for the signalling server
