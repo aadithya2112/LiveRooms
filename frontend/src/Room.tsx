@@ -10,6 +10,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 // --- End Shadcn UI Imports ---
 
+// --- Lucide Icons ---
+import { 
+  Video, 
+  VideoOff, 
+  Mic, 
+  MicOff, 
+  PhoneOff,
+  Monitor,
+  VolumeX
+} from "lucide-react";
+
 // Define types for socket events
 interface ServerToClientEvents {
   initiate_offer: () => void;
@@ -57,6 +68,11 @@ export default function Room() {
   const [connectionStatus, setConnectionStatus] = useState<string>(
     "Waiting for peer..."
   );
+  
+  // --- Media Control States ---
+  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
+  const [isAudioEnabled, setIsAudioEnabled] = useState(true);
+  const [isRemoteAudioEnabled, setIsRemoteAudioEnabled] = useState(true);
 
   const videoElement1 = useRef<HTMLVideoElement>(null);
   const videoElement2 = useRef<HTMLVideoElement>(null);
@@ -86,8 +102,9 @@ export default function Room() {
               new RTCIceCandidate(queuedCandidate)
             );
             console.log(`[${roomId}] Added queued ICE candidate.`);
-          } catch (error: any) {
+          } catch (error: unknown) {
             if (
+              error instanceof Error &&
               !error.message.includes("closed") &&
               !error.message.includes("candidate cannot be added")
             ) {
@@ -111,6 +128,29 @@ export default function Room() {
       }
     }
   }, [roomId]);
+
+  // --- Media Control Functions ---
+  const toggleVideo = useCallback(() => {
+    if (localStream) {
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = !videoTrack.enabled;
+        setIsVideoEnabled(videoTrack.enabled);
+        console.log(`[${roomId}] Video ${videoTrack.enabled ? 'enabled' : 'disabled'}`);
+      }
+    }
+  }, [localStream, roomId]);
+
+  const toggleAudio = useCallback(() => {
+    if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        setIsAudioEnabled(audioTrack.enabled);
+        console.log(`[${roomId}] Audio ${audioTrack.enabled ? 'enabled' : 'disabled'}`);
+      }
+    }
+  }, [localStream, roomId]);
 
   // --- WebRTC Callbacks (Offer/Answer) ---
   const createOffer = useCallback(async () => {
@@ -249,6 +289,61 @@ export default function Room() {
         });
       } catch (error) {
         console.error(`[${roomId}] Error accessing webcam/microphone:`, error);
+        
+        // In development/testing, create a mock stream for UI testing
+        if (import.meta.env.DEV || window.location.hostname === 'localhost') {
+          console.log(`[${roomId}] Creating mock stream for development...`);
+          
+          // Create a canvas element for fake video
+          const canvas = document.createElement('canvas');
+          canvas.width = 640;
+          canvas.height = 480;
+          const ctx = canvas.getContext('2d');
+          
+          // Draw a simple pattern
+          if (ctx) {
+            ctx.fillStyle = '#4F46E5'; // Indigo color
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'white';
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('Mock Video Feed', canvas.width / 2, canvas.height / 2);
+            ctx.fillText('(Development Mode)', canvas.width / 2, canvas.height / 2 + 30);
+          }
+          
+          // Get a stream from the canvas
+          const mockVideoStream = canvas.captureStream(30);
+          
+          // Create a mock audio track
+          const audioContext = new AudioContext();
+          const oscillator = audioContext.createOscillator();
+          const destination = audioContext.createMediaStreamDestination();
+          oscillator.connect(destination);
+          oscillator.frequency.setValueAtTime(0, audioContext.currentTime); // Silent
+          oscillator.start();
+          
+          // Combine video and audio
+          const mockStream = new MediaStream([
+            ...mockVideoStream.getVideoTracks(),
+            ...destination.stream.getAudioTracks()
+          ]);
+          
+          if (didCancel) {
+            mockStream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+          
+          setLocalStream(mockStream);
+          if (videoElement1.current) {
+            videoElement1.current.srcObject = mockStream;
+          }
+          
+          setConnectionStatus("Mock stream created (development mode)");
+          
+          // Don't try to connect to signaling server in mock mode
+          return;
+        }
+        
         setConnectionStatus("Media access denied");
         navigate("/");
       }
@@ -369,6 +464,15 @@ export default function Room() {
 
     peerConnection.current.ontrack = (event: RTCTrackEvent) => {
       console.log(`[${roomId}] Remote track received:`, event.track.kind);
+      
+      // Track remote audio state
+      if (event.track.kind === 'audio') {
+        setIsRemoteAudioEnabled(event.track.enabled);
+        event.track.addEventListener('ended', () => {
+          setIsRemoteAudioEnabled(false);
+        });
+      }
+      
       event.streams[0].getTracks().forEach((track) => {
         if (!newRemoteStream.getTrackById(track.id)) {
           console.log(
@@ -444,8 +548,9 @@ export default function Room() {
         await peerConnection.current.addIceCandidate(
           new RTCIceCandidate(candidateInit)
         );
-      } catch (error: any) {
+      } catch (error: unknown) {
         if (
+          error instanceof Error &&
           !error.message.includes("closed") &&
           !error.message.includes("candidate cannot be added")
         ) {
@@ -614,7 +719,7 @@ export default function Room() {
       {/* Main Video Area */}
       <main className="flex-grow grid grid-cols-1 md:grid-cols-2 gap-4 p-4 overflow-hidden">
         {/* Local Video Card */}
-        <Card className="bg-zinc-900 border-zinc-800 overflow-hidden relative aspect-video shadow-lg">
+        <Card className="bg-zinc-900 border-zinc-800 overflow-hidden relative aspect-video shadow-lg group">
           <CardContent className="p-0 h-full w-full relative">
             <video
               ref={videoElement1}
@@ -623,12 +728,41 @@ export default function Room() {
               playsInline
               muted // Important for local video
             />
+            {/* Video disabled overlay */}
+            {!isVideoEnabled && (
+              <div className="absolute inset-0 bg-zinc-800 flex items-center justify-center">
+                <div className="text-center">
+                  <VideoOff className="h-12 w-12 text-zinc-400 mx-auto mb-2" />
+                  <p className="text-zinc-400 text-sm">Camera Off</p>
+                </div>
+              </div>
+            )}
             <Badge
               variant="secondary"
               className="absolute bottom-2 left-2 bg-zinc-800 text-zinc-200 text-xs"
             >
-              You
+              You {!isAudioEnabled && <MicOff className="h-3 w-3 ml-1 inline" />}
             </Badge>
+            
+            {/* Local Video Controls Overlay */}
+            <div className="absolute top-2 right-2 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              <Button
+                onClick={toggleVideo}
+                size="sm"
+                variant={isVideoEnabled ? "secondary" : "destructive"}
+                className="h-8 w-8 p-0 rounded-full"
+              >
+                {isVideoEnabled ? <Video className="h-4 w-4" /> : <VideoOff className="h-4 w-4" />}
+              </Button>
+              <Button
+                onClick={toggleAudio}
+                size="sm"
+                variant={isAudioEnabled ? "secondary" : "destructive"}
+                className="h-8 w-8 p-0 rounded-full"
+              >
+                {isAudioEnabled ? <Mic className="h-4 w-4" /> : <MicOff className="h-4 w-4" />}
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
@@ -645,34 +779,75 @@ export default function Room() {
               variant="secondary"
               className="absolute bottom-2 left-2 bg-zinc-800 text-zinc-200 text-xs"
             >
-              Remote
+              Remote {!isRemoteAudioEnabled && <VolumeX className="h-3 w-3 ml-1 inline" />}
             </Badge>
             {/* Placeholder */}
             {!isPeerConnected &&
               (!remoteStream || remoteStream.getTracks().length === 0) && (
                 <div className="absolute inset-0 flex items-center justify-center text-zinc-500 bg-zinc-900 bg-opacity-80">
-                  <p>
-                    {connectionStatus.startsWith("Waiting") ||
-                    connectionStatus.startsWith("Signaling")
-                      ? "Waiting for peer..."
-                      : connectionStatus}
-                  </p>
+                  <div className="text-center">
+                    <Monitor className="h-12 w-12 text-zinc-400 mx-auto mb-2" />
+                    <p>
+                      {connectionStatus.startsWith("Waiting") ||
+                      connectionStatus.startsWith("Signaling")
+                        ? "Waiting for peer..."
+                        : connectionStatus}
+                    </p>
+                  </div>
                 </div>
               )}
           </CardContent>
         </Card>
       </main>
 
+      {/* Control Bar */}
+      <div className="px-4 py-2 bg-zinc-900 border-t border-zinc-700">
+        <div className="flex items-center justify-center gap-4">
+          {/* Video Toggle */}
+          <Button
+            onClick={toggleVideo}
+            size="lg"
+            variant={isVideoEnabled ? "outline" : "destructive"}
+            className={`h-12 w-12 rounded-full ${
+              isVideoEnabled 
+                ? "border-zinc-600 hover:bg-zinc-800" 
+                : "bg-red-600 hover:bg-red-700"
+            }`}
+          >
+            {isVideoEnabled ? <Video className="h-5 w-5" /> : <VideoOff className="h-5 w-5" />}
+          </Button>
+
+          {/* Audio Toggle */}
+          <Button
+            onClick={toggleAudio}
+            size="lg"
+            variant={isAudioEnabled ? "outline" : "destructive"}
+            className={`h-12 w-12 rounded-full ${
+              isAudioEnabled 
+                ? "border-zinc-600 hover:bg-zinc-800" 
+                : "bg-red-600 hover:bg-red-700"
+            }`}
+          >
+            {isAudioEnabled ? <Mic className="h-5 w-5" /> : <MicOff className="h-5 w-5" />}
+          </Button>
+
+          {/* Leave Room */}
+          <Button
+            onClick={() => navigate("/")}
+            size="lg"
+            variant="destructive"
+            className="h-12 w-12 rounded-full bg-red-600 hover:bg-red-700"
+          >
+            <PhoneOff className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
+
       {/* Footer */}
       <footer className="p-3 bg-zinc-900 border-t border-zinc-700 text-center shadow-md">
-        <Button
-          onClick={() => navigate("/")}
-          variant="destructive" // Use destructive variant for leaving/danger actions
-          size="sm"
-          className="bg-red-600 hover:bg-red-700 text-white font-bold"
-        >
-          Leave Room
-        </Button>
+        <p className="text-xs text-zinc-500">
+          Room ID: <span className="font-mono text-zinc-400">{roomId}</span>
+        </p>
       </footer>
     </div>
   );
