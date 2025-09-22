@@ -1,0 +1,38 @@
+services:
+  server:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.server
+    ports:
+      - "3000:3000"
+    container_name: "live-rooms-server-dev"
+    environment:
+      - PORT=3000
+    networks:
+      - live-rooms-network
+    # For development, you can mount the source code for hot reloading
+    # volumes:
+    #   - ./server:/app
+    #   - /app/node_modules
+  
+  web:
+    build:
+      context: .
+      dockerfile: ./docker/Dockerfile.web
+      args:
+        VITE_SIGNALLING_SERVER_URL: http://localhost:3000
+    ports:
+      - "5173:5173"
+    container_name: "live-rooms-web-dev"
+    depends_on:
+      - server
+    networks:
+      - live-rooms-network
+    # For development with hot reloading (optional)
+    # volumes:
+    #   - ./frontend:/app
+    #   - /app/node_modules
+
+networks:
+  live-rooms-network:
+    driver: bridge
