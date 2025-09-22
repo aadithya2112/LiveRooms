@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: ./docker/Dockerfile.server
     ports:
-      - "3000:3000"
+      - "3001:3000"
     container_name: "live-rooms-server"
     networks:
       - live-rooms-network
@@ -14,7 +14,7 @@ services:
       context: .
       dockerfile: ./docker/Dockerfile.web
       args:
-        VITE_SIGNALLING_SERVER_URL: http://server:3000
+        VITE_SIGNALLING_SERVER_URL: https://roomsnew-ss.aadithya.tech
     ports:
       - "5173:5173"
     container_name: "live-rooms-web"
