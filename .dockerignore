@@ -1,41 +1,8 @@
-# Dependencies
-node_modules
-*/node_modules
-
-# Build outputs
-dist
-*/dist
-build
-*/build
-
-# Git
+**/node_modules
+**/dist
 .git
-.gitignore
-
-# Environment files
-.env
-.env.*
-!.env.example
-
-# IDE
-.idea
-.vscode
-*.swp
-*.swo
-
-# Logs
-*.log
-npm-debug.log*
-pnpm-debug.log*
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# Docker
-docker-compose*.yaml
-Dockerfile*
-
-# Misc
-README.md
-*.md
+**/.env*
+**/.dev.vars
+**/.wrangler
+playwright-report
+test-results

@@ -1,144 +1,130 @@
-import express from "express";
-import http from "http";
-import { Server, Socket } from "socket.io";
-import cors from "cors";
+import { createServer } from 'node:http';
+import { WebSocketServer, WebSocket } from 'ws';
+import {
+  handleMessage,
+  handleLeave,
+  roomIdSchema,
+  type RoomClient,
+  type Session,
+} from '../../shared/protocol.js';
+import { allowedOrigin, iceConfig } from '../../shared/ice.js';
 
-interface ClientToServerEvents {
-  join: (roomId: string) => void;
-  offer: (offer: RTCSessionDescriptionInit) => void;
-  answer: (answer: RTCSessionDescriptionInit) => void;
-  "ice-candidate": (candidate: RTCIceCandidateInit) => void;
+const origins = process.env.ALLOWED_ORIGINS || 'http://localhost:5173';
+const rooms = new Map<string, Map<WebSocket, RoomClient>>();
+const requests = new Map<string, { count: number; start: number }>();
+function permitted(ip: string) {
+  const now = Date.now();
+  for (const [key, value] of requests) if (now - value.start > 60_000) requests.delete(key);
+  const entry = requests.get(ip) || { count: 0, start: now };
+  entry.count++;
+  requests.set(ip, entry);
+  return entry.count <= 30;
 }
-
-interface ServerToClientEvents {
-  // ready: () => void; // REMOVED - Replaced by more specific events
-  initiate_offer: () => void; // ADDED - Tells the client to create and send an offer
-  peer_ready: () => void; // ADDED - Tells the client a peer has joined and is waiting
-  offer: (offer: RTCSessionDescriptionInit) => void;
-  answer: (answer: RTCSessionDescriptionInit) => void;
-  "ice-candidate": (candidate: RTCIceCandidateInit) => void;
-  peer_disconnected: () => void;
-}
-
-interface InterServerEvents {}
-
-interface SocketData {
-  currentRoom?: string;
-}
-
-const app = express();
-app.use(cors());
-const server = http.createServer(app);
-
-const io = new Server<
-  ClientToServerEvents,
-  ServerToClientEvents,
-  InterServerEvents,
-  SocketData
->(server, {
-  cors: {
-    origin: "*", // Adjust for production
-    methods: ["GET", "POST"],
-  },
-});
-
-io.on("connection", (socket) => {
-  console.log(`User connected: ${socket.id}`);
-
-  socket.on("join", (roomIdInput) => {
-    const targetRoom = String(roomIdInput || "default_fallback_room");
-
-    const previousRoom = socket.data.currentRoom;
-    if (previousRoom && previousRoom !== targetRoom) {
-      console.log(`User ${socket.id} leaving room: ${previousRoom}`);
-      socket.to(previousRoom).emit("peer_disconnected");
-      socket.leave(previousRoom);
-    }
-
-    const clientsInRoom = io.sockets.adapter.rooms.get(targetRoom);
-    const numClients = clientsInRoom ? clientsInRoom.size : 0;
-
-    if (numClients >= 2) {
-      console.warn(`User ${socket.id} tried to join full room: ${targetRoom}`);
-      // Optional: socket.emit('room_full', targetRoom);
+const server = createServer(async (req, res) => {
+  const path = new URL(req.url || '/', 'http://localhost').pathname;
+  if (path === '/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ status: 'ok' }));
+    return;
+  }
+  if (!allowedOrigin(req.headers.origin, origins)) {
+    res.writeHead(403);
+    res.end('Origin not allowed');
+    return;
+  }
+  res.setHeader('Access-Control-Allow-Origin', req.headers.origin!);
+  res.setHeader('Vary', 'Origin');
+  res.setHeader('Cache-Control', 'no-store');
+  if (path === '/ice' && req.method === 'GET') {
+    if (!permitted(req.socket.remoteAddress || 'unknown')) {
+      res.writeHead(429);
+      res.end('Too many requests');
       return;
     }
-
-    socket.join(targetRoom);
-    socket.data.currentRoom = targetRoom;
-    console.log(`User ${socket.id} joined room: ${targetRoom}`);
-
-    // Recalculate after joining
-    const updatedClientsInRoom = io.sockets.adapter.rooms.get(targetRoom);
-    const updatedNumClients = updatedClientsInRoom
-      ? updatedClientsInRoom.size
-      : 0;
-    console.log(`Room ${targetRoom} now has ${updatedNumClients} client(s)`);
-
-    if (updatedNumClients === 2) {
-      console.log(`Room ${targetRoom} is full. Notifying peers to connect.`);
-      // The current socket is the second one to join. Designate it as the initiator.
-      const initiatorSocketId = socket.id;
-      console.log(
-        `Designating ${initiatorSocketId} (new joiner) as initiator.`
-      );
-
-      // Tell the new joiner (initiator) to start the offer process
-      socket.emit("initiate_offer");
-
-      // Tell the *other* client in the room that a peer is ready and waiting for the offer
-      socket.to(targetRoom).emit("peer_ready");
-    } else if (updatedNumClients === 1) {
-      console.log(
-        `Room ${targetRoom} has only one client. Waiting for another.`
-      );
-      // Optionally emit a 'waiting_for_peer' event if needed by the UI
-      // socket.emit("waiting_for_peer");
+    try {
+      const config = await iceConfig(process.env);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(config));
+    } catch {
+      res.writeHead(503);
+      res.end('Connectivity service unavailable');
     }
-  });
-
-  const forwardEvent = (
-    eventName: "offer" | "answer" | "ice-candidate",
-    data: any
-  ) => {
-    const currentRoom = socket.data.currentRoom;
-    if (currentRoom) {
-      // Forward to the other client(s) in the room
-      console.log(
-        `Forwarding '${eventName}' from ${socket.id} in room ${currentRoom}`
-      );
-      socket.to(currentRoom).emit(eventName, data);
-    } else {
-      console.warn(
-        `Cannot forward '${eventName}', user ${socket.id} is not in a room.`
-      );
-    }
-  };
-
-  socket.on("offer", (offer) => forwardEvent("offer", offer));
-  socket.on("answer", (answer) => forwardEvent("answer", answer));
-  socket.on("ice-candidate", (candidate) =>
-    forwardEvent("ice-candidate", candidate)
+    return;
+  }
+  res.writeHead(404);
+  res.end('Not found');
+});
+const wss = new WebSocketServer({ noServer: true, maxPayload: 64_000 });
+server.on('upgrade', (req, socket, head) => {
+  const match = /^\/rooms\/([a-z0-9-]+)$/.exec(
+    new URL(req.url || '/', 'http://localhost').pathname,
   );
-
-  socket.on("disconnect", () => {
-    const currentRoom = socket.data.currentRoom;
-    console.log(
-      `User disconnected: ${socket.id}${
-        currentRoom ? ` from room ${currentRoom}` : ""
-      }`
-    );
-    if (currentRoom) {
-      console.log(
-        `Notifying room ${currentRoom} about peer disconnect from ${socket.id}`
-      );
-      socket.to(currentRoom).emit("peer_disconnected");
-    }
-    socket.data.currentRoom = undefined; // Clean up custom data
+  if (
+    !match ||
+    !roomIdSchema.safeParse(match[1]).success ||
+    !allowedOrigin(req.headers.origin, origins) ||
+    !permitted(req.socket.remoteAddress || 'unknown')
+  ) {
+    socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    const roomId = match[1];
+    const room = rooms.get(roomId) || new Map<WebSocket, RoomClient>();
+    rooms.set(roomId, room);
+    let state: Session = { windowStart: Date.now(), messages: 0 };
+    const client: RoomClient = {
+      id: crypto.randomUUID(),
+      read: () => state,
+      write: (next) => {
+        state = next;
+      },
+      send: (message) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
+      },
+      close: (code, reason) => ws.close(code, reason),
+    };
+    room.set(ws, client);
+    const joinTimeout = setTimeout(() => {
+      if (!state.participant) ws.close(1008, 'Join timeout');
+    }, 10_000);
+    ws.on('message', (raw, binary) => {
+      if (binary) {
+        ws.close(1003, 'Text messages only');
+        return;
+      }
+      handleMessage(client, [...room.values()], raw.toString());
+    });
+    ws.on('close', () => {
+      clearTimeout(joinTimeout);
+      handleLeave(client, [...room.values()]);
+      room.delete(ws);
+      if (!room.size) rooms.delete(roomId);
+    });
+    ws.on('error', () => ws.close());
+    let alive = true;
+    ws.on('pong', () => {
+      alive = true;
+    });
+    const heartbeat = setInterval(() => {
+      if (!alive) {
+        ws.terminate();
+        return;
+      }
+      alive = false;
+      ws.ping();
+    }, 30_000);
+    ws.on('close', () => clearInterval(heartbeat));
   });
 });
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Signaling server running on http://localhost:${PORT}`);
-});
+server.listen(Number(process.env.PORT || 3001), '0.0.0.0', () =>
+  console.log(JSON.stringify({ event: 'listening', port: Number(process.env.PORT || 3001) })),
+);
+function shutdown() {
+  wss.clients.forEach((ws) => ws.close(1012, 'Server restarting'));
+  server.close();
+  setTimeout(() => process.exit(0), 3000).unref();
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

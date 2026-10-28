@@ -1,0 +1,7 @@
+packages:
+  - frontend
+  - server
+  - worker
+onlyBuiltDependencies:
+  - esbuild
+  - workerd

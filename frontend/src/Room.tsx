@@ -1,756 +1,581 @@
-import { useEffect, useRef, useState, useCallback } from "react"
-import { useParams, useNavigate } from "react-router-dom"
-import { io, Socket } from "socket.io-client"
-import { VITE_SIGNALLING_SERVER_URL } from "./config"
-
-// --- Shadcn UI Imports ---
-import { Button } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
-
-// --- Lucide Icons ---
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
+  ArrowLeft,
+  ArrowRight,
+  AudioLines,
+  Check,
+  ChevronDown,
+  Copy,
+  Info,
+  Link2,
+  LoaderCircle,
+  Maximize2,
   Mic,
   MicOff,
+  MonitorUp,
+  PhoneOff,
+  Settings2,
+  ShieldCheck,
   Video,
   VideoOff,
-  Monitor,
-  PhoneOff,
-  User,
-  Users,
-  Dot,
-} from "lucide-react"
+  Wifi,
+  X,
+} from 'lucide-react';
+import { roomIdSchema } from '../../shared/protocol';
+import { Brand } from './components/Brand';
+import { useMedia } from './hooks/useMedia';
+import { useCall } from './hooks/useCall';
 
-// Define types for socket events
-interface ServerToClientEvents {
-  initiate_offer: () => void
-  peer_ready: () => void
-  offer: (offer: RTCSessionDescriptionInit) => void
-  answer: (answer: RTCSessionDescriptionInit) => void
-  "ice-candidate": (candidate: RTCIceCandidateInit) => void
-  peer_disconnected: () => void
-}
-
-interface ClientToServerEvents {
-  join: (roomId: string) => void
-  offer: (offer: RTCSessionDescriptionInit) => void
-  answer: (answer: RTCSessionDescriptionInit) => void
-  "ice-candidate": (candidate: RTCIceCandidateInit) => void
-}
-
-// --- Socket Connection ---
-const socket: Socket<ServerToClientEvents, ClientToServerEvents> = io(
-  VITE_SIGNALLING_SERVER_URL || "http://localhost:3000",
-  { autoConnect: false }
-)
-
-// STUN server config
-const servers: RTCConfiguration = {
-  iceServers: [
-    {
-      urls: ["stun:stun1.l.google.com:19302", "stun:stun2.l.google.com:19302"],
-    },
-  ],
-  iceCandidatePoolSize: 10,
-}
-
-// --- The Room Component ---
-export default function Room() {
-  // --- Hooks ---
-  const { roomId } = useParams<{ roomId: string }>()
-  const navigate = useNavigate()
-
-  // --- State & Refs ---
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null)
-  const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
-  const [isPeerConnected, setIsPeerConnected] = useState(false)
-  const [connectionStatus, setConnectionStatus] = useState<string>(
-    "Waiting for peer..."
-  )
-
-  // Media control states
-  const [isAudioEnabled, setIsAudioEnabled] = useState(true)
-  const [isVideoEnabled, setIsVideoEnabled] = useState(true)
-  const [isScreenSharing, setIsScreenSharing] = useState(false)
-
-  const videoElement1 = useRef<HTMLVideoElement>(null)
-  const videoElement2 = useRef<HTMLVideoElement>(null)
-  const peerConnection = useRef<RTCPeerConnection | null>(null)
-  const queuedIceCandidates = useRef<RTCIceCandidateInit[]>([])
-  const isSignalingSetup = useRef(false)
-
-  // --- Media Control Functions ---
-  const toggleAudio = useCallback(() => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0]
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled
-        setIsAudioEnabled(audioTrack.enabled)
-      }
-    }
-  }, [localStream])
-
-  const toggleVideo = useCallback(() => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0]
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled
-        setIsVideoEnabled(videoTrack.enabled)
-      }
-    }
-  }, [localStream])
-
-  const toggleScreenShare = useCallback(async () => {
-    if (!peerConnection.current) return
-
-    try {
-      if (isScreenSharing) {
-        // Stop screen sharing and switch back to camera
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        })
-
-        const videoTrack = stream.getVideoTracks()[0]
-        const sender = peerConnection.current
-          .getSenders()
-          .find((s) => s.track && s.track.kind === "video")
-
-        if (sender && videoTrack) {
-          await sender.replaceTrack(videoTrack)
-        }
-
-        if (localStream) {
-          localStream.getVideoTracks().forEach((track) => track.stop())
-          localStream.removeTrack(localStream.getVideoTracks()[0])
-          localStream.addTrack(videoTrack)
-        }
-
-        setIsScreenSharing(false)
-      } else {
-        // Start screen sharing
-        const displayStream = await navigator.mediaDevices.getDisplayMedia({
-          video: true,
-          audio: false,
-        })
-
-        const videoTrack = displayStream.getVideoTracks()[0]
-        const sender = peerConnection.current
-          .getSenders()
-          .find((s) => s.track && s.track.kind === "video")
-
-        if (sender && videoTrack) {
-          await sender.replaceTrack(videoTrack)
-        }
-
-        if (localStream) {
-          localStream.getVideoTracks().forEach((track) => track.stop())
-          localStream.removeTrack(localStream.getVideoTracks()[0])
-          localStream.addTrack(videoTrack)
-        }
-
-        setIsScreenSharing(true)
-
-        videoTrack.onended = () => {
-          toggleScreenShare()
-        }
-      }
-    } catch (error) {
-      console.error("Error toggling screen share:", error)
-    }
-  }, [isScreenSharing, localStream])
-
-  // --- Cleanup Function ---
-  const leaveRoom = useCallback(() => {
-    // Stop all local media tracks
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        track.stop()
-        console.log(`Stopped ${track.kind} track`)
-      })
-    }
-
-    // Close peer connection
-    if (peerConnection.current) {
-      peerConnection.current.close()
-      peerConnection.current = null
-    }
-
-    // Disconnect socket
-    if (socket.connected) {
-      socket.disconnect()
-    }
-
-    // Clear video elements
-    if (videoElement1.current) {
-      videoElement1.current.srcObject = null
-    }
-    if (videoElement2.current) {
-      videoElement2.current.srcObject = null
-    }
-
-    // Navigate to home
-    navigate("/")
-  }, [localStream, navigate])
-
-  // --- Helper Function to Process Queued ICE Candidates ---
-  const processQueuedCandidates = useCallback(async () => {
-    if (!peerConnection.current || !peerConnection.current.remoteDescription) {
-      return
-    }
-    if (queuedIceCandidates.current.length > 0) {
-      console.log(
-        `[${roomId}] Processing ${queuedIceCandidates.current.length} queued ICE candidates...`
-      )
-      const candidatesToProcess = [...queuedIceCandidates.current]
-      queuedIceCandidates.current = []
-      for (const queuedCandidate of candidatesToProcess) {
-        if (
-          peerConnection.current?.remoteDescription &&
-          peerConnection.current.signalingState !== "closed"
-        ) {
-          try {
-            await peerConnection.current.addIceCandidate(
-              new RTCIceCandidate(queuedCandidate)
-            )
-            console.log(`[${roomId}] Added queued ICE candidate.`)
-          } catch (error: any) {
-            if (
-              !error.message.includes("closed") &&
-              !error.message.includes("candidate cannot be added")
-            ) {
-              console.error(
-                `[${roomId}] Error adding QUEUED ICE candidate:`,
-                error
-              )
-            }
-          }
-        }
-      }
-    }
-  }, [roomId])
-
-  // --- WebRTC Callbacks (Offer/Answer) ---
-  const createOffer = useCallback(async () => {
-    if (
-      !peerConnection.current ||
-      !roomId ||
-      peerConnection.current.signalingState !== "stable"
-    ) {
-      return
-    }
-    console.log(`[${roomId}] Creating offer...`)
-    setConnectionStatus("Creating offer...")
-    try {
-      const offer = await peerConnection.current.createOffer()
-      if (peerConnection.current.signalingState !== "stable") {
-        return
-      }
-      await peerConnection.current.setLocalDescription(offer)
-      socket.emit("offer", offer)
-    } catch (error) {
-      console.error(`[${roomId}] Error creating offer:`, error)
-      setConnectionStatus("Error creating offer")
-    }
-  }, [roomId])
-
-  const createAnswer = useCallback(
-    async (offer: RTCSessionDescriptionInit) => {
-      if (!peerConnection.current || !roomId) return
-
-      const currentState = peerConnection.current.signalingState
-      if (
-        currentState !== "stable" &&
-        currentState !== "have-remote-offer" &&
-        currentState !== "have-local-offer"
-      ) {
-        return
-      }
-
-      console.log(`[${roomId}] Received offer, attempting to create answer...`)
-      setConnectionStatus("Received offer, creating answer...")
-      try {
-        await peerConnection.current.setRemoteDescription(
-          new RTCSessionDescription(offer)
-        )
-        await processQueuedCandidates()
-
-        if (peerConnection.current.signalingState === "have-remote-offer") {
-          const answer = await peerConnection.current.createAnswer()
-          await peerConnection.current.setLocalDescription(answer)
-          socket.emit("answer", answer)
-        }
-      } catch (error) {
-        console.error(`[${roomId}] Error in createAnswer:`, error)
-        setConnectionStatus("Error handling offer")
-      }
-    },
-    [roomId, processQueuedCandidates]
-  )
-
-  // --- Effect 1: Get User Media & Join Room ---
+function StreamVideo({
+  stream,
+  muted = false,
+  mirror = false,
+  contain = false,
+}: {
+  stream: MediaStream | null;
+  muted?: boolean;
+  mirror?: boolean;
+  contain?: boolean;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (!roomId) {
-      navigate("/")
-      return
+    const video = ref.current;
+    if (video) {
+      video.srcObject = stream;
+      void video.play().catch(() => {});
     }
-
-    let didCancel = false
-
-    const startVideo = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: true,
-          audio: true,
-        })
-        if (didCancel) {
-          stream.getTracks().forEach((track) => track.stop())
-          return
-        }
-        setLocalStream(stream)
-        if (videoElement1.current) {
-          videoElement1.current.srcObject = stream
-        }
-
-        socket.connect()
-
-        socket.on("connect", () => {
-          if (didCancel) return
-          socket.emit("join", roomId)
-          setConnectionStatus("Connected, waiting for peer...")
-        })
-
-        socket.on("disconnect", () => {
-          setConnectionStatus("Disconnected")
-        })
-
-        socket.on("connect_error", () => {
-          setConnectionStatus("Connection error")
-          leaveRoom()
-        })
-      } catch (error) {
-        setConnectionStatus("Media access denied")
-        leaveRoom()
-      }
-    }
-
-    startVideo()
-
     return () => {
-      didCancel = true
-      if (peerConnection.current) {
-        peerConnection.current.close()
-        peerConnection.current = null
-      }
-      localStream?.getTracks().forEach((track) => track.stop())
-      setLocalStream(null)
-      if (socket.connected) {
-        socket.disconnect()
-      }
-      socket.off("connect")
-      socket.off("disconnect")
-      socket.off("connect_error")
-      setRemoteStream(null)
-      setIsPeerConnected(false)
-      queuedIceCandidates.current = []
-      isSignalingSetup.current = false
-    }
-  }, [roomId, navigate])
-
-  // --- Effect 2: Setup Peer Connection & Socket Listeners ---
-  useEffect(() => {
-    if (!localStream || !roomId || isSignalingSetup.current) {
-      return
-    }
-
-    if (
-      peerConnection.current &&
-      peerConnection.current.connectionState !== "closed"
-    ) {
-      return
-    }
-
-    peerConnection.current = new RTCPeerConnection(servers)
-    setIsPeerConnected(false)
-    queuedIceCandidates.current = []
-
-    localStream.getTracks().forEach((track) => {
-      peerConnection.current?.addTrack(track, localStream)
-    })
-
-    const newRemoteStream = new MediaStream()
-    setRemoteStream(newRemoteStream)
-    if (videoElement2.current) {
-      videoElement2.current.srcObject = newRemoteStream
-    }
-
-    peerConnection.current.onconnectionstatechange = () => {
-      if (peerConnection.current) {
-        const newState = peerConnection.current.connectionState
-        setConnectionStatus(`Connection: ${newState}`)
-        setIsPeerConnected(newState === "connected")
-        if (
-          newState === "failed" ||
-          newState === "disconnected" ||
-          newState === "closed"
-        ) {
-          setIsPeerConnected(false)
-          if (newState === "closed") {
-            if (videoElement2.current?.srcObject)
-              videoElement2.current.srcObject = null
-            setRemoteStream(null)
-          }
-        }
-      }
-    }
-
-    peerConnection.current.ontrack = (event: RTCTrackEvent) => {
-      event.streams[0].getTracks().forEach((track) => {
-        if (!newRemoteStream.getTrackById(track.id)) {
-          newRemoteStream.addTrack(track)
-        }
-      })
-      if (
-        videoElement2.current &&
-        videoElement2.current.srcObject !== newRemoteStream
-      ) {
-        videoElement2.current.srcObject = newRemoteStream
-      }
-    }
-
-    peerConnection.current.onicecandidate = (
-      event: RTCPeerConnectionIceEvent
-    ) => {
-      if (
-        event.candidate &&
-        peerConnection.current?.signalingState !== "closed"
-      ) {
-        socket.emit("ice-candidate", event.candidate)
-      }
-    }
-
-    const handleIceCandidate = async (candidateInit: RTCIceCandidateInit) => {
-      if (
-        !peerConnection.current ||
-        peerConnection.current.signalingState === "closed"
-      ) {
-        return
-      }
-
-      if (!peerConnection.current.remoteDescription) {
-        if (
-          !queuedIceCandidates.current.some(
-            (c) => c.candidate === candidateInit.candidate
-          )
-        ) {
-          queuedIceCandidates.current.push(candidateInit)
-        }
-        return
-      }
-
-      try {
-        await peerConnection.current.addIceCandidate(
-          new RTCIceCandidate(candidateInit)
-        )
-      } catch (error: any) {
-        if (
-          !error.message.includes("closed") &&
-          !error.message.includes("candidate cannot be added")
-        ) {
-          console.error(`Error adding ICE candidate:`, error)
-        }
-      }
-    }
-
-    const handleOffer = async (offer: RTCSessionDescriptionInit) => {
-      if (
-        !peerConnection.current ||
-        peerConnection.current.signalingState === "closed"
-      ) {
-        return
-      }
-      if (peerConnection.current.remoteDescription) {
-        return
-      }
-      await createAnswer(offer)
-    }
-
-    const handleAnswer = async (answer: RTCSessionDescriptionInit) => {
-      if (
-        !peerConnection.current ||
-        peerConnection.current.signalingState !== "have-local-offer"
-      ) {
-        return
-      }
-      try {
-        setConnectionStatus("Received answer, connecting...")
-        await peerConnection.current.setRemoteDescription(
-          new RTCSessionDescription(answer)
-        )
-        await processQueuedCandidates()
-      } catch (error) {
-        setConnectionStatus("Error handling answer")
-      }
-    }
-
-    const handleInitiateOffer = async () => {
-      if (
-        !peerConnection.current ||
-        peerConnection.current.signalingState !== "stable" ||
-        peerConnection.current.remoteDescription
-      ) {
-        return
-      }
-      await createOffer()
-    }
-
-    const handlePeerReady = () => {
-      setConnectionStatus("Peer detected, waiting for offer...")
-    }
-
-    const handlePeerDisconnected = () => {
-      setConnectionStatus("Peer disconnected")
-      setIsPeerConnected(false)
-
-      if (!peerConnection.current) {
-        return
-      }
-
-      if (peerConnection.current.signalingState !== "closed") {
-        peerConnection.current.close()
-      }
-
-      if (videoElement2.current) {
-        videoElement2.current.srcObject = null
-      }
-      setRemoteStream(null)
-      queuedIceCandidates.current = []
-    }
-
-    socket.on("ice-candidate", handleIceCandidate)
-    socket.on("offer", handleOffer)
-    socket.on("answer", handleAnswer)
-    socket.on("initiate_offer", handleInitiateOffer)
-    socket.on("peer_ready", handlePeerReady)
-    socket.on("peer_disconnected", handlePeerDisconnected)
-
-    isSignalingSetup.current = true
-
-    return () => {
-      socket.off("ice-candidate", handleIceCandidate)
-      socket.off("offer", handleOffer)
-      socket.off("answer", handleAnswer)
-      socket.off("initiate_offer", handleInitiateOffer)
-      socket.off("peer_ready", handlePeerReady)
-      socket.off("peer_disconnected", handlePeerDisconnected)
-      isSignalingSetup.current = false
-    }
-  }, [localStream, roomId, createOffer, createAnswer, processQueuedCandidates])
-
-  // --- Clean, Modern Render Logic ---
+      if (video) video.srcObject = null;
+    };
+  }, [stream]);
   return (
-    <div className="min-h-screen bg-gray-950 text-white flex flex-col">
-      {/* Clean Header */}
-      <header className="border-b border-gray-800 bg-gray-900/50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <h1 className="text-xl font-semibold">LiveRooms</h1>
-              <span className="text-gray-400">•</span>
-              <span className="text-gray-300 font-mono text-sm">{roomId}</span>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Dot
-                className={`w-4 h-4 ${
-                  isPeerConnected ? "text-green-400" : "text-yellow-400"
-                }`}
-              />
-              <span className="text-sm text-gray-300">{connectionStatus}</span>
-            </div>
+    <video
+      ref={ref}
+      autoPlay
+      playsInline
+      muted={muted}
+      className={`${mirror ? 'mirrored' : ''} ${contain ? 'video-contain' : ''}`}
+    />
+  );
+}
+function Control({
+  label,
+  active = false,
+  danger = false,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  active?: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      className={`control ${active ? 'control-active' : ''} ${danger ? 'control-danger' : ''}`}
+      aria-label={label}
+      title={label}
+      aria-pressed={danger ? undefined : active}
+      disabled={disabled}
+      onClick={onClick}
+    >
+      {children}
+      <span>{label}</span>
+    </button>
+  );
+}
+export default function Room() {
+  const { roomId = '' } = useParams();
+  const navigate = useNavigate();
+  if (!roomIdSchema.safeParse(roomId).success)
+    return (
+      <div className="invalid-room">
+        <Brand />
+        <h1>This room link doesn’t look right.</h1>
+        <p>Ask for a new invitation, or start your own conversation.</p>
+        <Link className="button primary" to="/">
+          Back to home <ArrowRight size={18} />
+        </Link>
+      </div>
+    );
+  return <RoomExperience key={roomId} roomId={roomId} leave={() => navigate('/?left=1')} />;
+}
+function RoomExperience({ roomId, leave }: { roomId: string; leave: () => void }) {
+  const media = useMedia();
+  const [name, setName] = useState(() => sessionStorage.getItem('liverooms-name') || '');
+  const [joined, setJoined] = useState(false);
+  const call = useCall(roomId, name.trim() || 'Guest', joined, media.stream, {
+    audio: media.audio,
+    video: media.video,
+    sharing: media.sharing,
+  });
+  const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
+  const [settings, setSettings] = useState(false);
+  const [details, setDetails] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const stage = useRef<HTMLDivElement>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(copyTimer.current), []);
+  useEffect(() => {
+    if (!joined) return;
+    const start = Date.now();
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(timer);
+  }, [joined]);
+  useEffect(() => {
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDetails(false);
+        setSettings(false);
+      }
+    };
+    window.addEventListener('keydown', dismiss);
+    return () => window.removeEventListener('keydown', dismiss);
+  }, []);
+  const invite = `${window.location.origin}/room/${roomId}`;
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(invite);
+      setCopied(true);
+      setCopyError(false);
+      clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopied(false), 2500);
+    } catch {
+      setCopyError(true);
+      setDetails(true);
+    }
+  }
+  function join() {
+    sessionStorage.setItem('liverooms-name', name.trim() || 'Guest');
+    setJoined(true);
+  }
+  const statusText = {
+    joining: 'Joining your room',
+    waiting: 'Waiting for your person',
+    connecting: 'Connecting your call',
+    connected: 'You’re connected',
+    reconnecting: 'Reconnecting',
+    error: 'Let’s try that again',
+    full: 'This room is full',
+  }[call.status];
+  const devices = (
+    <div className="device-fields">
+      <label>
+        Camera{' '}
+        <select
+          value={media.cameraId}
+          disabled={media.loading}
+          onChange={(e) => void media.start(e.target.value, media.microphoneId)}
+        >
+          <option value="">Default camera</option>
+          {media.devices
+            .filter((d) => d.kind === 'videoinput')
+            .map((d, i) => (
+              <option key={d.deviceId || i} value={d.deviceId}>
+                {d.label || `Camera ${i + 1}`}
+              </option>
+            ))}
+        </select>
+        <ChevronDown size={14} />
+      </label>
+      <label>
+        Microphone{' '}
+        <select
+          value={media.microphoneId}
+          disabled={media.loading}
+          onChange={(e) => void media.start(media.cameraId, e.target.value)}
+        >
+          <option value="">Default microphone</option>
+          {media.devices
+            .filter((d) => d.kind === 'audioinput')
+            .map((d, i) => (
+              <option key={d.deviceId || i} value={d.deviceId}>
+                {d.label || `Microphone ${i + 1}`}
+              </option>
+            ))}
+        </select>
+        <ChevronDown size={14} />
+      </label>
+    </div>
+  );
+  const mediaError = media.error && (
+    <div className="notice" role="alert">
+      <Info size={17} />
+      <span>{media.error}</span>
+      <button onClick={() => void media.start(media.cameraId, media.microphoneId)}>
+        Try again
+      </button>
+      <button className="icon-button" aria-label="Dismiss device error" onClick={media.clearError}>
+        <X size={15} />
+      </button>
+    </div>
+  );
+  if (!joined)
+    return (
+      <div className="lobby">
+        <header className="home-header">
+          <Brand />
+          <Link className="text-link" to="/">
+            <ArrowLeft size={15} /> Back to home
+          </Link>
+        </header>
+        <main className="lobby-main">
+          <div className="lobby-title">
+            <span className="eyebrow">A moment before you connect</span>
+            <h1>Come as you are.</h1>
+            <p>Get comfortable. Check your devices. The room is yours.</p>
           </div>
-        </div>
-      </header>
-
-      {/* Main Video Area */}
-      <main className="flex-1 p-6">
-        <div className="max-w-7xl mx-auto h-full">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-full">
-            {/* Local Video */}
-            <Card className="relative bg-gray-900 border-gray-800 overflow-hidden">
-              <CardContent className="p-0 aspect-video">
-                <video
-                  ref={videoElement1}
-                  className="w-full h-full object-cover"
-                  autoPlay
-                  playsInline
-                  muted
-                />
-                <Badge
-                  variant="secondary"
-                  className="absolute bottom-3 left-3 bg-black/60 text-white border-0"
-                >
-                  <User className="w-3 h-3 mr-1" />
-                  You
-                </Badge>
-                {!isVideoEnabled && (
-                  <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
-                    <div className="text-center">
-                      <div className="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-3">
-                        <User className="w-8 h-8 text-gray-400" />
-                      </div>
-                      <p className="text-gray-400 text-sm">Camera is off</p>
-                    </div>
+          <div className="lobby-layout">
+            <div className="preview-wrap">
+              <div className="camera-preview">
+                <StreamVideo stream={media.stream} muted mirror />
+                {(!media.video || media.loading) && (
+                  <div className="camera-placeholder">
+                    {media.loading ? (
+                      <LoaderCircle className="spin" size={30} />
+                    ) : (
+                      <>
+                        <span className="avatar">
+                          {name.trim().slice(0, 1).toUpperCase() || 'Y'}
+                        </span>
+                        <p>Your camera is off</p>
+                      </>
+                    )}
                   </div>
                 )}
-              </CardContent>
-            </Card>
-
-            {/* Remote Video */}
-            <Card className="relative bg-gray-900 border-gray-800 overflow-hidden">
-              <CardContent className="p-0 aspect-video">
-                <video
-                  ref={videoElement2}
-                  className="w-full h-full object-cover"
-                  autoPlay
-                  playsInline
+                <span className="video-label">
+                  {name.trim() || 'You'} <span>(you)</span>
+                </span>
+                <div className="preview-controls">
+                  <Control
+                    label={media.audio ? 'Mute microphone' : 'Unmute microphone'}
+                    active={!media.audio}
+                    disabled={media.loading}
+                    onClick={media.toggleAudio}
+                  >
+                    {media.audio ? <Mic size={20} /> : <MicOff size={20} />}
+                  </Control>
+                  <Control
+                    label={media.video ? 'Turn camera off' : 'Turn camera on'}
+                    active={!media.video}
+                    disabled={media.loading}
+                    onClick={media.toggleVideo}
+                  >
+                    {media.video ? <Video size={20} /> : <VideoOff size={20} />}
+                  </Control>
+                </div>
+              </div>
+              {devices}
+            </div>
+            <div className="lobby-join">
+              <div className="small-room-icon">
+                <Video size={24} />
+              </div>
+              <h2>Your room is ready.</h2>
+              <p>
+                Just two people.
+                <br />A little space to connect.
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  join();
+                }}
+              >
+                <label htmlFor="display-name">What should we call you?</label>
+                <input
+                  id="display-name"
+                  maxLength={40}
+                  autoComplete="given-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="Your name (optional)"
                 />
-                <Badge
-                  variant="secondary"
-                  className="absolute bottom-3 left-3 bg-black/60 text-white border-0"
-                >
-                  <Users className="w-3 h-3 mr-1" />
-                  Remote
-                </Badge>
-                {!isPeerConnected &&
-                  (!remoteStream || remoteStream.getTracks().length === 0) && (
-                    <div className="absolute inset-0 bg-gray-800 flex items-center justify-center">
-                      <div className="text-center">
-                        <div className="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center mx-auto mb-3">
-                          <Users className="w-8 h-8 text-gray-400" />
-                        </div>
-                        <p className="text-gray-300 font-medium mb-2">
-                          {connectionStatus.startsWith("Waiting") ||
-                          connectionStatus.startsWith("Connected")
-                            ? "Waiting for someone to join..."
-                            : connectionStatus}
-                        </p>
-                        <p className="text-gray-500 text-sm">
-                          Share the room ID to invite others
-                        </p>
-                      </div>
+                <button disabled={media.loading} className="button primary" type="submit">
+                  {media.loading ? 'Checking devices…' : 'Join room'}
+                  <ArrowRight size={18} />
+                </button>
+              </form>
+              <button className="text-link invite-link" onClick={() => void copy()}>
+                {copied ? <Check size={16} /> : <Link2 size={16} />}{' '}
+                {copied ? 'Link copied' : 'Copy invitation link'}
+              </button>
+              {copyError && (
+                <input
+                  aria-label="Invitation link"
+                  readOnly
+                  value={invite}
+                  onFocus={(e) => e.target.select()}
+                />
+              )}
+              <button
+                className="text-link audio-only-link"
+                disabled={media.loading}
+                onClick={() => void media.start(undefined, media.microphoneId, true)}
+              >
+                <Mic size={14} /> Use microphone only
+              </button>
+              <span className="privacy-note">
+                <ShieldCheck size={15} /> No account needed. No recording.
+              </span>
+            </div>
+          </div>
+          {mediaError}
+          <div className="lobby-footer">
+            <span className="live-dot" /> A good conversation starts with a simple hello.
+          </div>
+        </main>
+      </div>
+    );
+  return (
+    <div className="call-page">
+      <header className="call-header">
+        <Brand light />
+        <div className="call-heading">
+          <span className={`live-dot ${call.status === 'connected' ? '' : 'dot-waiting'}`} />
+          <span>{statusText}</span>
+          <span className="call-time">
+            {String(Math.floor(elapsed / 60)).padStart(2, '0')}:
+            {String(elapsed % 60).padStart(2, '0')}
+          </span>
+        </div>
+        <button className="button invite-button" onClick={() => void copy()}>
+          {copied ? <Check size={16} /> : <Link2 size={16} />}
+          <span>{copied ? 'Link copied' : 'Invite someone'}</span>
+        </button>
+      </header>
+      <main className="call-main">
+        {mediaError}
+        {call.error && (
+          <div className="notice" role="alert">
+            <Info size={17} />
+            <span>{call.error}</span>
+            <button onClick={call.retry}>Rejoin room</button>
+          </div>
+        )}
+        <div
+          ref={stage}
+          className={`video-stage ${media.sharing || call.peer?.media.sharing ? 'is-sharing' : ''}`}
+        >
+          <div className="remote-tile">
+            <StreamVideo stream={call.remoteStream} contain={call.peer?.media.sharing} />
+            {(call.status !== 'connected' ||
+              (!call.peer?.media.video && !call.peer?.media.sharing)) && (
+              <div className="remote-placeholder">
+                {call.peer && call.status === 'connected' ? (
+                  <>
+                    <span className="avatar remote-avatar">
+                      {call.peer.name.slice(0, 1).toUpperCase()}
+                    </span>
+                    <h2>{call.peer.name}</h2>
+                    <p>Camera is off. The conversation is still on.</p>
+                  </>
+                ) : (
+                  <>
+                    <div className="waiting-art">
+                      <span />
+                      <span />
+                      <i />
                     </div>
-                  )}
-              </CardContent>
-            </Card>
+                    <span className="eyebrow">
+                      {call.status === 'waiting'
+                        ? 'Good company is on the way'
+                        : 'Your space to connect'}
+                    </span>
+                    <h1>
+                      {statusText}
+                      {call.status === 'waiting' ? '.' : '…'}
+                    </h1>
+                    <p>
+                      {call.status === 'waiting'
+                        ? 'Send them the link. We’ll take care of the rest.'
+                        : call.status === 'full'
+                          ? 'Start another room or wait for a space to open.'
+                          : 'Take a breath. We’re getting things ready.'}
+                    </p>
+                    {call.status === 'waiting' && (
+                      <button className="button stage-invite" onClick={() => void copy()}>
+                        {copied ? <Check size={17} /> : <Copy size={17} />}{' '}
+                        {copied ? 'Invitation copied' : 'Copy invitation'}
+                      </button>
+                    )}
+                    {(call.status === 'error' || call.status === 'full') && (
+                      <button className="button stage-invite" onClick={call.retry}>
+                        Try joining again <ArrowRight size={17} />
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+            <div className="tile-top">
+              <span className="tile-tag">
+                <span className="live-dot" />
+                {call.peer?.media.sharing ? `${call.peer.name}’s screen` : 'Live room'}
+              </span>
+              <button
+                className="icon-button"
+                aria-label="Toggle fullscreen"
+                onClick={() => {
+                  if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+                  else void stage.current?.requestFullscreen().catch(() => {});
+                }}
+              >
+                <Maximize2 size={17} />
+              </button>
+            </div>
+            {call.peer && (
+              <span className="video-label">
+                {call.peer.name} {!call.peer.media.audio && <MicOff size={14} />}
+              </span>
+            )}
+          </div>
+          <div className="local-tile">
+            <StreamVideo
+              stream={media.stream}
+              muted
+              mirror={!media.sharing}
+              contain={media.sharing}
+            />
+            {!media.video && !media.sharing && (
+              <div className="camera-placeholder">
+                <span className="avatar">{name.trim().slice(0, 1).toUpperCase() || 'Y'}</span>
+              </div>
+            )}
+            <span className="video-label">
+              {name.trim() || 'You'} <span>(you)</span>
+              {!media.audio && <MicOff size={14} />}
+            </span>
+            {media.sharing && (
+              <span className="sharing-tag">
+                <MonitorUp size={13} /> Sharing your screen
+              </span>
+            )}
           </div>
         </div>
       </main>
-
-      {/* Clean Controls Footer */}
-      <footer className="border-t border-gray-800 bg-gray-900/50 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex items-center justify-center space-x-4">
-            {/* Audio Toggle */}
-            <Button
-              onClick={toggleAudio}
-              variant={isAudioEnabled ? "secondary" : "destructive"}
-              size="lg"
-              className={`w-12 h-12 rounded-full text-white ${
-                isAudioEnabled
-                  ? "bg-gray-700 hover:bg-gray-600"
-                  : "bg-red-600 hover:bg-red-700"
-              }`}
+      <footer className="call-footer">
+        <div className="room-info">
+          <button className="text-link" onClick={() => setDetails(!details)}>
+            <Info size={16} />
+            <span>Room details</span>
+          </button>
+          <span>Just the two of you.</span>
+        </div>
+        <div className="call-controls">
+          <Control
+            label={media.audio ? 'Mute microphone' : 'Unmute microphone'}
+            active={!media.audio}
+            onClick={media.toggleAudio}
+          >
+            <span className="control-icon">
+              {media.audio ? <Mic size={21} /> : <MicOff size={21} />}
+            </span>
+          </Control>
+          <Control
+            label={media.video ? 'Turn camera off' : 'Turn camera on'}
+            active={!media.video}
+            onClick={media.toggleVideo}
+          >
+            {media.video ? <Video size={21} /> : <VideoOff size={21} />}
+          </Control>
+          {typeof navigator.mediaDevices?.getDisplayMedia === 'function' && (
+            <Control
+              label={media.sharing ? 'Stop sharing' : 'Share screen'}
+              active={media.sharing}
+              onClick={() => void media.toggleShare()}
             >
-              {isAudioEnabled ? (
-                <Mic className="w-5 h-5 text-white" />
-              ) : (
-                <MicOff className="w-5 h-5 text-white" />
-              )}
-            </Button>
-
-            {/* Video Toggle */}
-            <Button
-              onClick={toggleVideo}
-              variant={isVideoEnabled ? "secondary" : "destructive"}
-              size="lg"
-              className={`w-12 h-12 rounded-full text-white ${
-                isVideoEnabled
-                  ? "bg-gray-700 hover:bg-gray-600"
-                  : "bg-red-600 hover:bg-red-700"
-              }`}
-            >
-              {isVideoEnabled ? (
-                <Video className="w-5 h-5 text-white" />
-              ) : (
-                <VideoOff className="w-5 h-5 text-white" />
-              )}
-            </Button>
-
-            {/* Screen Share */}
-            <Button
-              onClick={toggleScreenShare}
-              variant={isScreenSharing ? "default" : "secondary"}
-              size="lg"
-              className={`w-12 h-12 rounded-full text-white ${
-                isScreenSharing
-                  ? "bg-blue-600 hover:bg-blue-700"
-                  : "bg-gray-700 hover:bg-gray-600"
-              }`}
-            >
-              <Monitor className="w-5 h-5 text-white" />
-            </Button>
-
-            {/* Divider */}
-            <div className="w-px h-8 bg-gray-600 mx-2" />
-
-            {/* Leave Call */}
-            <Button
-              onClick={leaveRoom}
-              variant="destructive"
-              size="lg"
-              className="w-12 h-12 rounded-full bg-red-600 hover:bg-red-700 text-white"
-            >
-              <PhoneOff className="w-5 h-5 text-white" />
-            </Button>
-          </div>
-
-          {/* Status Indicators */}
-          <div className="text-center mt-3">
-            <div className="flex items-center justify-center space-x-4 text-sm">
-              <div
-                className={`flex items-center space-x-1 ${
-                  isAudioEnabled ? "text-white" : "text-gray-400"
-                }`}
-              >
-                {isAudioEnabled ? (
-                  <Mic className="w-3 h-3" />
-                ) : (
-                  <MicOff className="w-3 h-3" />
-                )}
-                <span>Microphone</span>
-              </div>
-              <div
-                className={`flex items-center space-x-1 ${
-                  isVideoEnabled ? "text-white" : "text-gray-400"
-                }`}
-              >
-                {isVideoEnabled ? (
-                  <Video className="w-3 h-3" />
-                ) : (
-                  <VideoOff className="w-3 h-3" />
-                )}
-                <span>Camera</span>
-              </div>
-              {isScreenSharing && (
-                <div className="flex items-center space-x-1 text-blue-400">
-                  <Monitor className="w-3 h-3" />
-                  <span>Screen Sharing</span>
-                </div>
-              )}
-            </div>
-          </div>
+              <MonitorUp size={21} />
+            </Control>
+          )}
+          <span className="control-divider" />
+          <Control label="Device settings" active={settings} onClick={() => setSettings(!settings)}>
+            <Settings2 size={21} />
+          </Control>
+          <Control label="Leave call" danger onClick={leave}>
+            <PhoneOff size={21} />
+          </Control>
+        </div>
+        <div className="connection-note">
+          <ShieldCheck size={15} />
+          <span>WebRTC encrypted media</span>
         </div>
       </footer>
+      {settings && (
+        <div className="panel" role="dialog" aria-modal="false" aria-label="Device settings">
+          <div className="panel-header">
+            <h2>Make yourself comfortable.</h2>
+            <button
+              className="icon-button"
+              onClick={() => setSettings(false)}
+              aria-label="Close device settings"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <p>Choose your camera and microphone.</p>
+          {devices}
+          <button
+            className="text-link audio-only-link"
+            disabled={media.loading}
+            onClick={() => void media.start(undefined, media.microphoneId, true)}
+          >
+            <Mic size={14} /> Use microphone only
+          </button>
+          <button
+            className="button secondary"
+            onClick={() => void media.start(media.cameraId, media.microphoneId)}
+            disabled={media.loading}
+          >
+            {media.loading ? 'Checking devices…' : 'Retry device access'}
+          </button>
+        </div>
+      )}
+      {details && (
+        <div className="panel" role="dialog" aria-modal="false" aria-label="Room details">
+          <div className="panel-header">
+            <h2>A little room information.</h2>
+            <button
+              className="icon-button"
+              onClick={() => setDetails(false)}
+              aria-label="Close room details"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <label htmlFor="invite-url">Invitation link</label>
+          <input id="invite-url" value={invite} readOnly onFocus={(e) => e.target.select()} />
+          <button className="text-link" onClick={() => void copy()}>
+            <Copy size={15} />
+            {copied ? 'Copied' : copyError ? 'Select the link above to copy it' : 'Copy link'}
+          </button>
+          <div className="diagnostics">
+            <span>
+              <Wifi size={16} /> {call.connectionType}
+            </span>
+            <span>
+              <AudioLines size={16} />{' '}
+              {call.roundTrip === null
+                ? 'Latency available once connected'
+                : `${call.roundTrip} ms round-trip latency`}
+            </span>
+            <span>
+              <ShieldCheck size={16} />{' '}
+              {call.relayConfigured
+                ? 'TURN fallback available'
+                : 'Direct connections only · TURN not configured'}
+            </span>
+          </div>
+          <p className="details-note">
+            Anyone with this link can join when there’s space. Share it with someone you trust.
+          </p>
+        </div>
+      )}
     </div>
-  )
+  );
 }

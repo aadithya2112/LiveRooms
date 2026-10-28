@@ -1,0 +1,19 @@
+{
+  "name": "worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787",
+    "typegen": "wrangler types",
+    "typecheck": "tsc --noEmit",
+    "dry-run": "wrangler deploy --dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0",
+    "typescript": "^5.9.3"
+  }
+}

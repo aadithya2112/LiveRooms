@@ -1,0 +1,30 @@
+{
+  "name": "liverooms",
+  "private": true,
+  "packageManager": "pnpm@10.25.0",
+  "scripts": {
+    "dev": "concurrently -k -n web,signaling 'pnpm --filter frontend dev --host 0.0.0.0' 'pnpm --filter server dev'",
+    "build": "pnpm --filter frontend build && pnpm --filter server build && pnpm --filter worker typecheck",
+    "lint": "pnpm --filter frontend lint",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "check": "pnpm lint && pnpm build && pnpm typecheck:tests && pnpm test",
+    "typecheck:tests": "tsc --noEmit",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.1",
+    "@types/node": "^22.18.0",
+    "@types/ws": "^8.18.1",
+    "concurrently": "^9.2.1",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.3",
+    "vitest": "^5.0.5",
+    "ws": "^8.18.3"
+  },
+  "dependencies": {
+    "zod": "^4.1.12"
+  },
+  "type": "module"
+}
