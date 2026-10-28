@@ -18,6 +18,7 @@
     },
   ],
   "vars": {
+    "TURN_ENABLED": "false",
     "ALLOWED_ORIGINS": "https://rooms.aadithya.dev,https://live-rooms.vercel.app",
   },
   "ratelimits": [

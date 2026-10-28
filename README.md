@@ -4,6 +4,8 @@ A small, thoughtful space for two people to connect. Create a room, check your d
 
 **Live app:** [rooms.aadithya.dev](https://rooms.aadithya.dev)
 
+The hosted app currently uses direct peer-to-peer connections only. TURN is disabled to avoid metered relay usage; some restrictive networks may be unable to connect.
+
 ![LiveRooms home](docs/screenshots/home.png)
 
 Explore the [pre-call lobby](docs/screenshots/lobby.png), [call workspace](docs/screenshots/room.png), and [mobile layout](docs/screenshots/room-mobile.png).

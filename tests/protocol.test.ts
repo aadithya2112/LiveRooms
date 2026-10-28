@@ -129,6 +129,14 @@ describe('two-person room lifecycle', () => {
   });
 });
 describe('connectivity configuration', () => {
+  it('does not issue TURN credentials when explicitly disabled, even if credentials exist', async () => {
+    const request = vi.spyOn(globalThis, 'fetch');
+    expect(
+      await iceConfig({ TURN_ENABLED: 'false', TURN_KEY_ID: 'key', TURN_API_TOKEN: 'secret' }),
+    ).toMatchObject({ relayConfigured: false });
+    expect(request).not.toHaveBeenCalled();
+  });
+
   it('checks exact origins and never allows arbitrary sites', () => {
     expect(allowedOrigin('http://localhost:5173', 'https://app.test, http://localhost:5173')).toBe(
       true,

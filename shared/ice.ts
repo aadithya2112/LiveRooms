@@ -3,13 +3,14 @@ export const defaultIceServers: IceServer[] = [
   { urls: ['stun:stun.cloudflare.com:3478', 'stun:stun.l.google.com:19302'] },
 ];
 export interface TurnConfig {
+  TURN_ENABLED?: string;
   TURN_KEY_ID?: string;
   TURN_API_TOKEN?: string;
 }
 export async function iceConfig(
   env: TurnConfig,
 ): Promise<{ iceServers: IceServer[]; relayConfigured: boolean }> {
-  if (!env.TURN_KEY_ID || !env.TURN_API_TOKEN)
+  if (env.TURN_ENABLED === 'false' || !env.TURN_KEY_ID || !env.TURN_API_TOKEN)
     return { iceServers: defaultIceServers, relayConfigured: false };
   const response = await fetch(
     `https://rtc.live.cloudflare.com/v1/turn/keys/${encodeURIComponent(env.TURN_KEY_ID)}/credentials/generate-ice-servers`,

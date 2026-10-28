@@ -8,6 +8,7 @@ The previous push-triggered VM deployment workflow has been removed; it remains 
 - Signaling: **https://liverooms-signaling.aadithyacps.workers.dev**
 - Vercel project: `aadithya2112s-projects/live-rooms`, root directory `frontend`, with external workspace sources enabled.
 - Worker: `liverooms-signaling`, configured by `worker/wrangler.production.jsonc`.
+- TURN issuance is explicitly disabled in production (`TURN_ENABLED=false`); the deployed app currently supports direct peer connections only. Its Worker TURN secrets have been removed.
 - Local development and CI use `worker/wrangler.jsonc`; keep its localhost allowlist separate from production.
 - Vercel production and preview environments have the hosted signaling URL. Preview origins must be added explicitly to the Worker allowlist before calls work there.
 - Vercel retains its existing deployment protection settings. The custom domain is public; preview/deployment URLs may require Vercel authentication.
@@ -33,7 +34,9 @@ The Worker rate-limits connection/configuration requests per IP and signaling me
 
 ### 2. Configure TURN
 
-Create a Cloudflare Realtime TURN key in the intended account. Store the key ID and its API token **only in backend secrets**:
+TURN is currently disabled to avoid metered relay usage. Re-enabling it requires explicit approval, setting `TURN_ENABLED` to `true` in the production configuration, and deploying it along with valid secrets.
+
+To configure TURN when approved, create a Cloudflare Realtime TURN key in the intended account. Store the key ID and its API token **only in backend secrets**:
 
 ```sh
 pnpm --filter worker exec wrangler secret put TURN_KEY_ID --config wrangler.production.jsonc
