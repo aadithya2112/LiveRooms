@@ -9,5 +9,11 @@
     "types": ["node"],
     "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
-  "include": ["shared", "tests", "playwright.config.ts", "vitest.config.ts"]
+  "include": [
+    "shared",
+    "tests",
+    "playwright.config.ts",
+    "vitest.config.ts",
+    "playwright.production.config.ts"
+  ]
 }

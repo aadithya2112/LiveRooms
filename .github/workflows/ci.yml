@@ -23,6 +23,7 @@ jobs:
       - run: pnpm format:check
       - run: pnpm check
       - run: pnpm --filter worker dry-run
+      - run: pnpm --filter worker dry-run:production
       - run: pnpm exec playwright install --with-deps chromium
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@v7.0.2

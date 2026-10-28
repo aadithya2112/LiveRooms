@@ -11,7 +11,8 @@
     "check": "pnpm lint && pnpm build && pnpm typecheck:tests && pnpm test",
     "typecheck:tests": "tsc --noEmit",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test:production": "playwright test --config playwright.production.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.1",

@@ -7,7 +7,9 @@
     "typegen": "wrangler types",
     "typecheck": "tsc --noEmit",
     "dry-run": "wrangler deploy --dry-run",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy --config wrangler.production.jsonc",
+    "deploy:production": "wrangler deploy --config wrangler.production.jsonc",
+    "dry-run:production": "wrangler deploy --config wrangler.production.jsonc --dry-run"
   },
   "dependencies": {
     "zod": "^4.1.12"

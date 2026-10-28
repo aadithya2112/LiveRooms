@@ -2,6 +2,8 @@
 
 A small, thoughtful space for two people to connect. Create a room, check your devices, and send a link. No account or download required.
 
+**Live app:** [rooms.aadithya.dev](https://rooms.aadithya.dev)
+
 ![LiveRooms home](docs/screenshots/home.png)
 
 Explore the [pre-call lobby](docs/screenshots/lobby.png), [call workspace](docs/screenshots/room.png), and [mobile layout](docs/screenshots/room-mobile.png).
